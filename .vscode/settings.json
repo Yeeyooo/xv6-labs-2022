@@ -1,0 +1,11 @@
+{
+     "files.associations": {
+          "*.json": "c",
+          "future": "c",
+          "istream": "c",
+          "mutex": "c",
+          "ostream": "c",
+          "stop_token": "c",
+          "typeinfo": "c"
+     }
+}

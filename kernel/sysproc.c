@@ -75,6 +75,30 @@ int
 sys_pgaccess(void)
 {
   // lab pgtbl: your code here.
+  uint64 start;    // starting virtual address of the first user page to check
+  int n;             // the number of pages to check
+  uint64 addr;     // a user address to store result
+  uint64 output_bitmask = 0;
+  argaddr(0, &start);  // fetch arguments
+  argint(1, &n);
+  argaddr(2, &addr);
+
+  struct proc* p = myproc();
+  pte_t *pte;
+  for (uint64 i = 0; i < n; i++) {   // check n pages 
+    pte = walk(p->pagetable, start + i * PGSIZE, 0);   // find corresponding PTE
+    if (pte == 0) {
+      return -1;
+    }
+    if (*pte & PTE_A) {          // This page has been accessed
+      output_bitmask |= (1 << i);
+      *pte ^= PTE_A;             // clear access bit after checking if it is set
+    }
+  }
+  // copy the result from kernel to user space
+  if (copyout(p->pagetable, addr, (char *)&output_bitmask, sizeof(uint64)) < 0) {
+    return -1;
+  }
   return 0;
 }
 #endif
