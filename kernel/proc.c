@@ -125,6 +125,10 @@ found:
   p->pid = allocpid();
   p->state = USED;
 
+  p->interval = 0;    // Initialize newly added fields in struct proc
+  p->passed = 0;
+  p->handler = 0;
+
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
     freeproc(p);

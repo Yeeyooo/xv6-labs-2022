@@ -1,0 +1,17 @@
+Question:
+Which registers contain arguments to functions? For example, which register holds 13 in main's call to printf?
+Answer:
+a0,a1,a2...contain arguments to functions. In case of printf function, a2 register holds 13
+
+
+Question:
+Run the following code.
+
+	unsigned int i = 0x00646c72;
+	printf("H%x Wo%s", 57616, &i);
+      
+What is the output? Here's an ASCII table that maps bytes to characters.
+The output depends on that fact that the RISC-V is little-endian. If the RISC-V were instead big-endian what would you set i to in order to yield the same output? Would you need to change 57616 to a different value?
+Answer:
+The output is HE110 World;0x726c6400;There is no need to change 57616, it is a constant.
+

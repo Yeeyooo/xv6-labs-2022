@@ -67,6 +67,7 @@ sys_sleep(void)
     sleep(&ticks, &tickslock);
   }
   release(&tickslock);
+  backtrace();
   return 0;
 }
 
@@ -90,4 +91,24 @@ sys_uptime(void)
   xticks = ticks;
   release(&tickslock);
   return xticks;
+}
+
+uint64
+sys_sigreturn(void)   // Just return zero for now
+{
+  return 0;
+}
+
+uint64
+sys_sigalarm(void)
+{
+  int ticks;
+  uint64 pointer;
+  argint(0, &ticks);
+  argaddr(1, &pointer);
+  struct proc *p = myproc();
+  // store the alarm interval and the pointer to the handler function
+  p->interval = ticks;  
+  p->handler = (void (*)())pointer;  // type cast to a function pointer
+  return 0;   // right?
 }

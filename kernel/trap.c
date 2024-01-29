@@ -78,7 +78,16 @@ usertrap(void)
 
   // give up the CPU if this is a timer interrupt.
   if(which_dev == 2)
+  {
+    if (p->interval != 0) {
+      p->passed += 1;
+      if (p->passed == p->interval) {    // invoke handler right now
+        p->trapframe->epc = (uint64)p->handler;
+        p->passed = 0;
+      }
+    }
     yield();
+  }
 
   usertrapret();
 }
