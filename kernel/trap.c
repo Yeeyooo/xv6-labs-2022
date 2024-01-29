@@ -77,11 +77,11 @@ usertrap(void)
     exit(-1);
 
   // give up the CPU if this is a timer interrupt.
-  if(which_dev == 2 && p->ishandling == 0)
+  if(which_dev == 2)
   {
     if (p->interval != 0) {
       p->passed += 1;
-      if (p->passed == p->interval) {    // invoke handler right now
+      if (p->passed == p->interval && p->ishandling == 0) {    // invoke handler right now
         p->epc = p->trapframe->epc;
         p->trapframe->epc = (uint64)p->handler;
         p->passed = 0;
