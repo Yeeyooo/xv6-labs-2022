@@ -43,7 +43,6 @@ freerange(void *pa_start, void *pa_end)
     ref_count[((uint64)p - KERNBASE) >> 12] = 1;
     kfree(p);
   }
-    // kfree(p);
 }
 
 // Free the page of physical memory pointed at by pa,

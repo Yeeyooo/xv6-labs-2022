@@ -345,7 +345,7 @@ typedef uint64 *pagetable_t; // 512 PTEs
 #define PTE_U (1L << 4) // user can access
 #define PTE_RSW_L (1L << 8)   // lower bit of RSW bits  
 #define PTE_RSW_H (1L << 9)   // if a PTE is COW mapping
-
+#define PTE_COW (1L << 8)
 // shift a physical address to the right place for a PTE.
 #define PA2PTE(pa) ((((uint64)pa) >> 12) << 10)
 
