@@ -5,6 +5,7 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
+#include "spinlock.h"
 
 /*
  * the kernel's page table.
@@ -14,6 +15,10 @@ pagetable_t kernel_pagetable;
 extern char etext[];  // kernel.ld sets this to end of kernel code.
 
 extern char trampoline[]; // trampoline.S
+
+extern int ref_count[];
+
+extern struct spinlock count_lock;
 
 // Make a direct-map page table for the kernel.
 pagetable_t
@@ -281,7 +286,7 @@ freewalk(pagetable_t pagetable)
       pagetable[i] = 0;
     } else if(pte & PTE_V){
       panic("freewalk: leaf");
-    }
+    } 
   }
   kfree((void*)pagetable);
 }
@@ -308,28 +313,61 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   pte_t *pte;
   uint64 pa, i;
   uint flags;
-  char *mem;
 
-  for(i = 0; i < sz; i += PGSIZE){
-    if((pte = walk(old, i, 0)) == 0)
+  for (i = 0; i < sz; i += PGSIZE) {
+    if ((pte = walk(old, i, 0)) == 0)
       panic("uvmcopy: pte should exist");
-    if((*pte & PTE_V) == 0)
+    if ((*pte & PTE_V) == 0)
       panic("uvmcopy: page not present");
+
+    if ((*pte & PTE_W)) {   // the page is originally writeable
+      *pte |= PTE_RSW_L;
+      *pte &= ~PTE_W;       // clear PTE_W bit in PTE
+    }
+    else {
+      *pte &= ~PTE_RSW_L;  // the page is not originally writeable
+    }
+    *pte |= PTE_RSW_H;      // current page is COW mapping
     pa = PTE2PA(*pte);
-    flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
-      goto err;
-    memmove(mem, (char*)pa, PGSIZE);
-    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
-      kfree(mem);
+    flags = PTE_FLAGS(*pte);   // flags after modification
+    // map the parent's physical pages into the child instead of allocating new pages
+    if (mappages(new, i, PGSIZE, pa, flags) != 0) {  
       goto err;
     }
+    acquire(&count_lock);
+    ref_count[(pa - KERNBASE) / PGSIZE]++;
+    release(&count_lock);
   }
   return 0;
+  err:
+    uvmunmap(new, 0, i / PGSIZE, 1);
+    return -1;
 
- err:
-  uvmunmap(new, 0, i / PGSIZE, 1);
-  return -1;
+  // pte_t *pte;
+  // uint64 pa, i;
+  // uint flags;
+  // char *mem;
+
+  // for(i = 0; i < sz; i += PGSIZE){
+  //   if((pte = walk(old, i, 0)) == 0)
+  //     panic("uvmcopy: pte should exist");
+  //   if((*pte & PTE_V) == 0)
+  //     panic("uvmcopy: page not present");
+  //   pa = PTE2PA(*pte);
+  //   flags = PTE_FLAGS(*pte);
+  //   if((mem = kalloc()) == 0)
+  //     goto err;
+    // memmove(mem, (char*)pa, PGSIZE);
+  //   if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
+  //     kfree(mem);
+  //     goto err;
+  //   }
+  // }
+  // return 0;
+
+//  err:
+//   uvmunmap(new, 0, i / PGSIZE, 1);
+//   return -1;
 }
 
 // mark a PTE invalid for user access.
@@ -352,12 +390,51 @@ int
 copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 {
   uint64 n, va0, pa0;
+  pte_t* pte;
+  char *mem;
 
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
     pa0 = walkaddr(pagetable, va0);
     if(pa0 == 0)
       return -1;
+
+
+    if ((pte = walk(pagetable, va0, 0)) == 0) {
+      // panic("copyout: no pte");
+      return -1;
+    }
+    if ((*pte & PTE_V) == 0) {
+      // panic("copyout: page not present");
+      return -1;
+    }
+    if ((*pte & PTE_U) == 0) {
+      return -1;
+    }
+    if ((*pte & PTE_RSW_H)) {   // if it is a COW page
+      if ((*pte & PTE_RSW_L) == 0) {
+        struct proc* p = myproc();
+        setkilled(p);
+        return -1;
+      }
+      mem = (char *)kalloc();  // allocate a new physical page
+      if (mem == 0) {
+        struct proc* p = myproc();
+        setkilled(p);
+        return -1;
+      }
+      uint64 flags = PTE_FLAGS(*pte);
+      memmove((void*)mem, (void*)pa0, PGSIZE);
+      kfree((void*)pa0);    // free the previous page
+      flags |= PTE_W;
+      flags &= ~PTE_RSW_H;
+      flags &= ~PTE_RSW_L;
+      *pte = PA2PTE((uint64)mem) | flags;
+      
+      pa0 = (uint64)mem;
+    }
+
+    
     n = PGSIZE - (dstva - va0);
     if(n > len)
       n = len;

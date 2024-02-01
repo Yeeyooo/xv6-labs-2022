@@ -10,6 +10,7 @@ struct spinlock tickslock;
 uint ticks;
 
 extern char trampoline[], uservec[], userret[];
+extern int ref_count[];
 
 // in kernelvec.S, calls kerneltrap().
 void kernelvec();
@@ -67,7 +68,40 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
-  } else {
+  } 
+  else if (r_scause() == 15) {   // page fault caused by a write
+    uint64 va = r_stval();       // get the VA that caused the fault
+    uint64 pa;
+    uint flags;
+    char *mem;
+    pte_t* pte;
+    if ((pte = walk(p->pagetable, va, 0)) == 0)
+      panic("trap: pte should exist");
+    if ((*pte & PTE_V) == 0) 
+      panic("trap: page not present");
+    pa = PTE2PA(*pte);
+    flags = PTE_FLAGS(*pte);
+
+    if ((*pte & PTE_RSW_H) && (*pte & PTE_RSW_L) && ((mem = kalloc()) != 0)) {    // a page that was COW mapped and originally writeable
+      memmove(mem, (char *)pa, PGSIZE);   // copy the old page to the new page
+      // ref_count[(pa - KERNBASE) / PGSIZE] -= 1;
+      kfree((void*)pa);
+      // *pte &= (~PTE_V);     // clear the previous valid bit to avoid remapping panic
+      // uvmunmap(p->pagetable, PGROUNDDOWN(va), 1, 0);
+      flags |= PTE_W;       // set PTE_R bit in new page
+      flags &= ~PTE_RSW_H;
+      flags &= ~PTE_RSW_L;
+      *pte = PA2PTE((uint64)mem) | flags;
+      // if (mappages(p->pagetable, va, PGSIZE, (uint64)mem, flags) != 0) {
+      //   kfree((void *)mem);
+      // }
+    }
+    else {     // the page is not originally writeable
+      setkilled(p);
+    }
+
+  }
+    else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     setkilled(p);
@@ -218,4 +252,3 @@ devintr()
     return 0;
   }
 }
-
