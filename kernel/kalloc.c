@@ -83,7 +83,7 @@ kalloc(void)
   acquire(&kmem[id].lock);
   r = kmem[id].freelist;
 
-  if (r) {       // current cpu has no free memory
+  if (r) {       
     kmem[id].freelist = r->next;
   }
   else {
