@@ -125,7 +125,7 @@ sys_link(void)
 {
   char name[DIRSIZ], new[MAXPATH], old[MAXPATH];
   struct inode *dp, *ip;
-
+   // begins by fetching arguments, two strings old and new
   if(argstr(0, old, MAXPATH) < 0 || argstr(1, new, MAXPATH) < 0)
     return -1;
 
@@ -145,7 +145,8 @@ sys_link(void)
   ip->nlink++;
   iupdate(ip);
   iunlock(ip);
-
+  // The new parent directory must exist and be on the same device as the existing inode.
+  // Find the parent directory and final path element of new.
   if((dp = nameiparent(new, name)) == 0)
     goto bad;
   ilock(dp);
@@ -168,6 +169,7 @@ bad:
   end_op();
   return -1;
 }
+
 
 // Is the directory dp empty except for "." and ".." ?
 static int
@@ -248,12 +250,12 @@ create(char *path, short type, short major, short minor)
   struct inode *ip, *dp;
   char name[DIRSIZ];
 
-  if((dp = nameiparent(path, name)) == 0)
+  if((dp = nameiparent(path, name)) == 0)   // get the inode of the parent directory
     return 0;
 
   ilock(dp);
 
-  if((ip = dirlookup(dp, name, 0)) != 0){
+  if((ip = dirlookup(dp, name, 0)) != 0){  // check whether the name already exists
     iunlockput(dp);
     ilock(ip);
     if(type == T_FILE && (ip->type == T_FILE || ip->type == T_DEVICE))
@@ -262,7 +264,7 @@ create(char *path, short type, short major, short minor)
     return 0;
   }
 
-  if((ip = ialloc(dp->dev, type)) == 0){
+  if((ip = ialloc(dp->dev, type)) == 0){   // allocate a new inode if the name does not exist
     iunlockput(dp);
     return 0;
   }
@@ -279,7 +281,7 @@ create(char *path, short type, short major, short minor)
       goto fail;
   }
 
-  if(dirlink(dp, name, ip->inum) < 0)
+  if(dirlink(dp, name, ip->inum) < 0)  // link it into the parent directory after initialization.
     goto fail;
 
   if(type == T_DIR){
@@ -307,17 +309,17 @@ sys_open(void)
   char path[MAXPATH];
   int fd, omode;
   struct file *f;
-  struct inode *ip;
+  struct inode *ip, *next;
   int n;
 
-  argint(1, &omode);
+  argint(1, &omode);    // fetch arguments
   if((n = argstr(0, path, MAXPATH)) < 0)
     return -1;
 
   begin_op();
 
   if(omode & O_CREATE){
-    ip = create(path, T_FILE, 0, 0);
+    ip = create(path, T_FILE, 0, 0);  // create returns a locked inode
     if(ip == 0){
       end_op();
       return -1;
@@ -327,8 +329,38 @@ sys_open(void)
       end_op();
       return -1;
     }
-    ilock(ip);
+    ilock(ip);   // namei does not lock the node, so sys_open must lock the inode itself
     if(ip->type == T_DIR && omode != O_RDONLY){
+      iunlockput(ip);
+      end_op();
+      return -1;
+    }
+  }
+
+  if(ip->type == T_SYMLINK && !(omode & O_NOFOLLOW)) {   // symoblic file and O_NOFOLLOW flag is not specified.
+    int threshold = 10;
+    // Recursively follow symbolic link until a non-link file is reached.
+    // If the links form a cycle, return an error code.
+    while (ip->type == T_SYMLINK && threshold > 0) { 
+      if((readi(ip, 0, (uint64)path, 0, MAXPATH)) != MAXPATH) {
+        iunlockput(ip);
+        end_op();
+        return -1;
+      }
+
+      if ((next = namei(path)) == 0) {
+        iunlockput(ip);
+        end_op();
+        return -1;
+      }
+
+      iunlockput(ip);
+      ip = next;
+      ilock(ip);
+      threshold -= 1;
+    }
+
+    if (threshold == 0) {
       iunlockput(ip);
       end_op();
       return -1;
@@ -501,5 +533,31 @@ sys_pipe(void)
     fileclose(wf);
     return -1;
   }
+  return 0;
+}
+
+uint64
+sys_symlink(void)
+{ 
+  char target[MAXPATH], path[MAXPATH];   // initial bug place!
+  struct inode *ip;
+  
+  if((argstr(0, target, MAXPATH)) < 0 || argstr(1, path, MAXPATH) < 0)  // fetch arguments
+    return -1;
+  
+  begin_op();
+
+  if ((ip = create(path, T_SYMLINK, 0, 0)) == 0) {
+    end_op();
+    return -1;
+  }
+
+  if(writei(ip, 0, (uint64)target, 0, MAXPATH) != MAXPATH) {   // store target path in inode data block
+    end_op();
+    return -1;
+  }
+
+  iunlockput(ip);
+  end_op();
   return 0;
 }

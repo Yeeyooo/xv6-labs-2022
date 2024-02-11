@@ -33,8 +33,8 @@
 // Contents of the header block, used for both the on-disk header block
 // and to keep track in memory of logged block# before commit.
 struct logheader {
-  int n;
-  int block[LOGSIZE];
+  int n;               // the count of log blocks
+  int block[LOGSIZE];  // an array of sector numbers, one for each of the logged blocks
 };
 
 struct log {
@@ -127,15 +127,17 @@ void
 begin_op(void)
 {
   acquire(&log.lock);
-  while(1){
+  // begin_op() waits until the logging system is not currently committing,
+  // and until there is enough reserved log space to hold the writes from this call.
+  while(1){   
     if(log.committing){
       sleep(&log, &log.lock);
     } else if(log.lh.n + (log.outstanding+1)*MAXOPBLOCKS > LOGSIZE){
       // this op might exhaust log space; wait for commit.
       sleep(&log, &log.lock);
     } else {
-      log.outstanding += 1;
-      release(&log.lock);
+      log.outstanding += 1; // Incrementing log.outstanding both reserves space and prevents a commit from
+      release(&log.lock);   // occurring during this system call.
       break;
     }
   }
@@ -166,8 +168,8 @@ end_op(void)
   if(do_commit){
     // call commit w/o holding locks, since not allowed
     // to sleep with locks.
-    commit();
-    acquire(&log.lock);
+    commit();           // If the count of outstanding system calls is zero, it commits the current transaction
+    acquire(&log.lock); // by calling commit().
     log.committing = 0;
     wakeup(&log);
     release(&log.lock);

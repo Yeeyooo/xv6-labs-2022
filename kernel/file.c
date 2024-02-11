@@ -14,7 +14,7 @@
 #include "proc.h"
 
 struct devsw devsw[NDEV];
-struct {
+struct {      // All the open files in the system are kept in this global file table.
   struct spinlock lock;
   struct file file[NFILE];
 } ftable;

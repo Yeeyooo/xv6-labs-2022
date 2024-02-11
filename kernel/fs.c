@@ -383,10 +383,10 @@ static uint
 bmap(struct inode *ip, uint bn)
 {
   uint addr, *a;
-  struct buf *bp;
+  struct buf *bp, *bbp;
 
-  if(bn < NDIRECT){
-    if((addr = ip->addrs[bn]) == 0){
+  if(bn < NDIRECT) {   // In the range of direct blocks
+    if((addr = ip->addrs[bn]) == 0) {
       addr = balloc(ip->dev);
       if(addr == 0)
         return 0;
@@ -396,9 +396,8 @@ bmap(struct inode *ip, uint bn)
   }
   bn -= NDIRECT;
 
-  if(bn < NINDIRECT){
-    // Load indirect block, allocating if necessary.
-    if((addr = ip->addrs[NDIRECT]) == 0){
+  if(bn < NINDIRECT) {  // The 12th should be a singly-indirect block
+    if((addr = ip->addrs[NDIRECT]) == 0) {
       addr = balloc(ip->dev);
       if(addr == 0)
         return 0;
@@ -406,13 +405,46 @@ bmap(struct inode *ip, uint bn)
     }
     bp = bread(ip->dev, addr);
     a = (uint*)bp->data;
-    if((addr = a[bn]) == 0){
+    if ((addr = a[bn]) == 0) {
       addr = balloc(ip->dev);
-      if(addr){
+      if(addr) {
         a[bn] = addr;
         log_write(bp);
       }
     }
+    brelse(bp);
+    return addr;
+  }
+  bn -= NINDIRECT;
+
+  if(bn < NINDIRECT * NINDIRECT) {  // In the range of doubly-linked blocks
+    if((addr = ip->addrs[NDIRECT+1]) == 0) {
+      addr = balloc(ip->dev);
+      if(addr == 0)
+        return 0;
+      ip->addrs[NDIRECT+1] = addr;
+    }
+    bp = bread(ip->dev, addr);
+    a = (uint*)bp->data;
+    int index = bn / NINDIRECT;
+    if ((addr = a[index]) == 0) {
+      addr = balloc(ip->dev);
+      if(addr) {
+        a[index] = addr;
+        log_write(bp);
+      }
+    }
+    bn %= NINDIRECT;
+    bbp = bread(ip->dev, addr);
+    a = (uint*)bbp->data;
+    if ((addr = a[bn]) == 0) {
+      addr = balloc(ip->dev);
+      if(addr) {
+        a[bn] = addr;
+        log_write(bbp);
+      }
+    }
+    brelse(bbp);
     brelse(bp);
     return addr;
   }
@@ -425,9 +457,9 @@ bmap(struct inode *ip, uint bn)
 void
 itrunc(struct inode *ip)
 {
-  int i, j;
-  struct buf *bp;
-  uint *a;
+  int i, j, k;
+  struct buf *bp, *bbp;
+  uint *a, *aa;
 
   for(i = 0; i < NDIRECT; i++){
     if(ip->addrs[i]){
@@ -446,6 +478,28 @@ itrunc(struct inode *ip)
     brelse(bp);
     bfree(ip->dev, ip->addrs[NDIRECT]);
     ip->addrs[NDIRECT] = 0;
+  }
+
+  if(ip->addrs[NDIRECT+1]){
+    bp = bread(ip->dev, ip->addrs[NDIRECT+1]);
+    a = (uint*)bp->data;
+    for(j = 0; j < NINDIRECT; j++) {
+      if(a[j]) {
+        bbp = bread(ip->dev, a[j]);
+        aa = (uint*)bbp->data;
+        for(k = 0; k < NINDIRECT; k++) {
+          if(aa[k]) {
+            bfree(ip->dev, aa[k]);
+          }
+        }
+        brelse(bbp);
+        bfree(ip->dev, a[j]);
+        a[j] = 0;
+      }
+    }
+    brelse(bp);
+    bfree(ip->dev, ip->addrs[NDIRECT+1]);
+    ip->addrs[NDIRECT+1] = 0;
   }
 
   ip->size = 0;
@@ -652,28 +706,28 @@ static struct inode*
 namex(char *path, int nameiparent, char *name)
 {
   struct inode *ip, *next;
-
-  if(*path == '/')
+  // decide where the path evaluation begins
+  if(*path == '/')    // path begins with a slash, evaluation begins at the root
     ip = iget(ROOTDEV, ROOTINO);
-  else
+  else                // otherwise, evaluation begins at the current directory
     ip = idup(myproc()->cwd);
 
   while((path = skipelem(path, name)) != 0){
     ilock(ip);
-    if(ip->type != T_DIR){
+    if(ip->type != T_DIR){   // If it is not a directory, the lookup fails.
       iunlockput(ip);
       return 0;
     }
     if(nameiparent && *path == '\0'){
       // Stop one level early.
-      iunlock(ip);
+      iunlock(ip);           // stops early, the final path element has been copied into name.
       return ip;
     }
     if((next = dirlookup(ip, name, 0)) == 0){
       iunlockput(ip);
       return 0;
     }
-    iunlockput(ip);
+    iunlockput(ip);   // unlock the directory before obtaining a lock on next to avoid deadlock.
     ip = next;
   }
   if(nameiparent){
